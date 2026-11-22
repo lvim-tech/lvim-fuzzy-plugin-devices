@@ -1,0 +1,41 @@
+description = "Disks, partitions, phones, shares and servers: list them, mount, unmount, eject, and go into them — udisks and gvfs do the work, the tool draws the lists"
+runtime     = "process"
+exec        = "./target/release/lvim-fuzzy-plugin-devices"
+build       = "cargo build --release"
+hosts       = ["lvim-fuzzy-commander"]
+requires    = ["udisksctl|gio"]
+version     = "0.1.3"
+license     = "BSD-3-Clause"
+
+# EVERYTHING here is configuration. Override any key in ~/.config/lvim-plugins/lvim-fuzzy-plugin-devices.toml (every tool) or in one tool's own
+# config under [plugins.lvim-fuzzy-plugin-devices] (that tool only).
+[config]
+timeout = 120         # seconds a call may take (a mount may wait for a password prompt of the desktop)
+system  = ["/", "/boot", "/efi", "/home", "/usr", "/var", "/nix", "[SWAP]"]   # mount points that are not offered to unmount or eject
+unmount_internal = false   # true: the unmount list offers the machine's own disks too (by default: removable disks and what is under /run/media or /media)
+
+# THE BUTTONS. The group `g` is the app's (go): these are added to it. Move any in the app's config:
+# `[plugins.lvim-fuzzy-plugin-devices.keys] devices = "g v"`; a key somebody has is an error and the app does not start.
+[actions.devices]
+title = "devices"
+call = "devices"
+group = "g"
+button = "d"
+
+[actions.unmount]
+title = "unmount"
+call = "unmount_list"
+group = "g"
+button = "u"
+
+[actions.eject]
+title = "eject"
+call = "eject_list"
+group = "g"
+button = "e"
+
+[actions.connect]
+title = "connect"
+call = "connect_ask"
+group = "g"
+button = "C"

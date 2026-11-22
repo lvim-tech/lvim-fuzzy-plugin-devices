@@ -1,0 +1,30 @@
+[package]
+name = "lvim-fuzzy-plugin-devices"
+version = "0.1.3"
+edition = "2024"
+license = "BSD-3-Clause"
+description = "The devices plugin of the lvim fuzzy tools: disks and partitions (udisks), phones, shares and servers (gvfs) — mount, unmount, eject, and go into them"
+repository = "https://github.com/lvim-tech/lvim-fuzzy-plugin-devices"
+rust-version = "1.85"
+
+[lib]
+name = "lvim_fuzzy_plugin_devices"
+path = "src/lib.rs"
+
+[[bin]]
+name = "lvim-fuzzy-plugin-devices"
+path = "src/main.rs"
+
+[dependencies]
+# the plugin host: the bundled install (the plugin ships inside lvc)
+lvim-fuzzy-plugin = { path = "../lvim-fuzzy-plugin", default-features = false }
+serde_json = "1"
+libc = "0.2"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
+
+[workspace]
