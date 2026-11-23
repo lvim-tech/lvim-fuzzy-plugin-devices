@@ -1,6 +1,6 @@
 [package]
 name = "lvim-fuzzy-plugin-devices"
-version = "0.1.3"
+version = "0.1.7"
 edition = "2024"
 license = "BSD-3-Clause"
 description = "The devices plugin of the lvim fuzzy tools: disks and partitions (udisks), phones, shares and servers (gvfs) — mount, unmount, eject, and go into them"

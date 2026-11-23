@@ -30,9 +30,7 @@ They are added to the group `g` (go) by `plugin.toml` — the plugin's say, not 
 
 | keys | what |
 |---|---|
-| `gd` | **devices**: every disk with a file system, every gvfs mount, and a phone or a camera that is plugged in but not mounted yet (`⏏ … ○`); `●` mounted (and where) or `○` not; Enter mounts what is not and goes into it. The list is read each time, so a stick or a phone plugged in a moment ago is in it (a phone must be in **file transfer** mode, and gvfs needs its `gvfs-mtp` / `gvfs-gphoto2` backends) |
-| `gu` | **unmount**: what a person plugged in (removable disks, what the desktop mounted under `/run/media` or `/media`) and gvfs mounts — not the system's (`/`, `/boot`, `/home` …), and not the machine's own disks unless `unmount_internal = true` |
-| `ge` | **eject**: a stick, a card, an external disk (its partitions are unmounted, then it is powered off), a gvfs mount |
+| `gd` | **devices**: every disk with a file system, every gvfs mount, and a phone or a camera that is plugged in but not mounted yet (`⏏ … ○`); `●` mounted (and where) or `○` not; Enter mounts what is not and goes into it; on a row, `m` mounts it, `u` unmounts it and `e` ejects it (not the system's disks) — the list stays open and is read again. The list is read each time, so a stick or a phone plugged in a moment ago is in it (a phone must be in **file transfer** mode, and gvfs needs its `gvfs-mtp` / `gvfs-gphoto2` backends) |
 | `gC` | **connect**: asks for a URI (`smb://host/share`, `sftp://user@host`) and mounts it with gvfs, then goes into it |
 
 The lists have the search field of the tool's lists. Move a button in the app's config: `[plugins.lvim-fuzzy-plugin-devices.keys] devices = "g v"`;

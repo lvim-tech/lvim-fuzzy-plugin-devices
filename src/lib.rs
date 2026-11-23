@@ -5,10 +5,10 @@
 //!
 //! | call | context | answer (instructions) |
 //! |---|---|---|
-//! | `devices` | — | `menu`: every disk with a file system and every gvfs mount; Enter calls `enter` with the item |
+//! | `devices` | — | `menu`: every disk with a file system and every gvfs mount; Enter calls `enter` with the item; `m` mounts it, `u` unmounts it, `e` ejects it (the list stays open) |
 //! | `enter` | `arg` | mounts it when it is not mounted, then `cd` into it |
-//! | `unmount_list` / `eject_list` | — | `menu` of what can be unmounted / ejected; Enter calls `unmount` / `eject` |
-//! | `unmount` / `eject` | `arg` | `message` |
+//! | `list_mount` / `list_unmount` / `list_eject` | `arg` | the keys of that list: do it (`message`), then the `menu` again |
+//! | `mount_only` / `unmount` / `eject` | `arg` | `message` |
 //! | `connect_ask` | — | `input` for a URI (`smb://host/share`); then `connect` |
 //! | `connect` | `arg` | mounts the URI with gvfs, then `cd` into it |
 //!
@@ -87,9 +87,12 @@ pub fn parse_lsblk(json: &str) -> Vec<Blk> {
     out
 }
 
-/// The gvfs mounts that are not plain folders (`Mount(0): Galaxy -> mtp://…`) in `gio mount -l` output.
+/// The gvfs mounts that are not plain folders (`Mount(0): Galaxy -> mtp://…`) in `gio mount -l` output. gvfs lists one mount twice when it also
+/// belongs to a volume (a phone: `Mount(0): SAMSUNG Android` under its volume and `Mount(1): mtp` on its own, the same URI): the first, which has the
+/// volume's name, is the one kept.
 pub fn parse_gio(text: &str) -> Vec<Gio> {
-    text.lines()
+    let all: Vec<Gio> = text
+        .lines()
         .filter_map(|l| {
             let rest = l.trim_start().strip_prefix("Mount(")?;
             let (_, rest) = rest.split_once("): ")?;
@@ -97,7 +100,14 @@ pub fn parse_gio(text: &str) -> Vec<Gio> {
             let uri = uri.trim();
             (!uri.starts_with("file://") && uri.contains("://")).then(|| Gio { name: name.trim().to_string(), uri: uri.to_string() })
         })
-        .collect()
+        .collect();
+    let mut out: Vec<Gio> = Vec::new();
+    for g in all {
+        if !out.iter().any(|o| o.uri.trim_end_matches('/') == g.uri.trim_end_matches('/')) {
+            out.push(g);
+        }
+    }
+    out
 }
 
 /// The gvfs VOLUMES that are not disks of udisks and are not mounted yet — a phone in file-transfer mode (MTP), a camera, an iPhone — in
@@ -139,7 +149,8 @@ pub fn parse_gio_volumes(text: &str) -> Vec<Gio> {
 }
 
 fn gio_volumes() -> Vec<Gio> {
-    let o = Command::new("gio").args(["mount", "-l"]).output();
+    // `-i` adds what a volume is made of: the `activation_root=` URI (without it a phone has no address to mount)
+    let o = Command::new("gio").args(["mount", "-li"]).output();
     o.ok().filter(|o| o.status.success()).map(|o| parse_gio_volumes(&String::from_utf8_lossy(&o.stdout))).unwrap_or_default()
 }
 
@@ -354,6 +365,51 @@ fn gio_cells(kind: &str, g: &Gio, mounted: bool) -> Vec<(String, &'static str)> 
     ]
 }
 
+/// The list of the devices: each row has `m` (mount) when it is not mounted, `u` (unmount) and `e` (eject) when it is — they do it and the list
+/// comes back refreshed, so the list stays open.
+fn devices_menu(system: &[String]) -> Vec<Value> {
+    let mut items: Vec<Value> = lsblk()
+        .iter()
+        .map(|b| {
+            let arg = format!("blk:{}", b.path);
+            let is_mounted = b.mounts.iter().any(|m| m != "[SWAP]");
+            // the machine's own system disks are not offered to unmount (the same rule as the unmount list)
+            let can = is_mounted && !is_system(b, system);
+            with_keys(row(blk_cells(b), "enter", &arg), &arg, !is_mounted, can, can && b.removable)
+        })
+        .collect();
+    let mounted = gio_mounts();
+    for g in &mounted {
+        let arg = format!("gio:{}", g.uri);
+        items.push(with_keys(row(gio_cells("gvfs", g, true), "enter", &arg), &arg, false, true, true));
+    }
+    // a phone or a camera that is plugged in and not mounted yet
+    for g in gio_volumes().iter().filter(|v| !mounted.iter().any(|m| m.uri.trim_end_matches('/') == v.uri.trim_end_matches('/'))) {
+        let arg = format!("gio:{}", g.uri);
+        items.push(with_keys(row(gio_cells("phone/camera", g, false), "enter", &arg), &arg, true, false, false));
+    }
+    if items.is_empty() {
+        return vec![message("no disks or mounts found (lsblk, gio)")];
+    }
+    vec![menu("Devices", items)]
+}
+
+/// The keys of a row of the devices list besides Enter.
+fn with_keys(mut row: Value, arg: &str, mount: bool, unmount: bool, eject: bool) -> Value {
+    let mut keys = Vec::new();
+    if mount {
+        keys.push(json!({"key": "m", "label": "mount", "call": "list_mount", "arg": arg}));
+    }
+    if unmount {
+        keys.push(json!({"key": "u", "label": "unmount", "call": "list_unmount", "arg": arg}));
+    }
+    if eject {
+        keys.push(json!({"key": "e", "label": "eject", "call": "list_eject", "arg": arg}));
+    }
+    row["keys"] = json!(keys);
+    row
+}
+
 fn message(t: &str) -> Value {
     json!({"op": "message", "text": t})
 }
@@ -383,21 +439,7 @@ pub fn answer(id: &Value, ctx: &Value) -> Result<Vec<Value>, String> {
     let arg = ctx["arg"].as_str().unwrap_or("");
     let system = config_system(&ctx["config"]);
     match call {
-        "devices" => {
-            let mut items: Vec<Value> = lsblk().iter().map(|b| row(blk_cells(b), "enter", &format!("blk:{}", b.path))).collect();
-            let mounted = gio_mounts();
-            for g in &mounted {
-                items.push(row(gio_cells("gvfs", g, true), "enter", &format!("gio:{}", g.uri)));
-            }
-            // a phone or a camera that is plugged in and not mounted yet
-            for g in gio_volumes().iter().filter(|v| !mounted.iter().any(|m| m.uri.trim_end_matches('/') == v.uri.trim_end_matches('/'))) {
-                items.push(row(gio_cells("phone/camera", g, false), "enter", &format!("gio:{}", g.uri)));
-            }
-            if items.is_empty() {
-                return Ok(vec![message("no disks or mounts found (lsblk, gio)")]);
-            }
-            Ok(vec![menu("Devices", items)])
-        }
+        "devices" => Ok(devices_menu(&system)),
         "enter" => {
             if let Some(uri) = arg.strip_prefix("gio:") {
                 return connect(id, &ctx["config"], uri);
@@ -411,24 +453,6 @@ pub fn answer(id: &Value, ctx: &Value) -> Result<Vec<Value>, String> {
             let at = mounted_at(&out).ok_or_else(|| format!("mounted, but not where: {}", first_line(&out)))?;
             Ok(vec![cd(&at)])
         }
-        "unmount_list" => {
-            // what a person plugged in: removable disks and what the desktop mounted under /run/media or /media — the machine's own disks are
-            // not offered unless the settings say so (`unmount_internal`)
-            let internal = ctx["config"]["unmount_internal"].as_bool().unwrap_or(false);
-            let mut items: Vec<Value> = lsblk()
-                .iter()
-                .filter(|b| b.mounts.iter().any(|m| m != "[SWAP]") && !is_system(b, &system))
-                .filter(|b| internal || b.removable || b.mounts.iter().any(|m| m.starts_with("/run/media/") || m.starts_with("/media/")))
-                .map(|b| row(blk_cells(b), "unmount", &format!("blk:{}", b.path)))
-                .collect();
-            for g in gio_mounts() {
-                items.push(row(gio_cells("gvfs", &g, true), "unmount", &format!("gio:{}", g.uri)));
-            }
-            if items.is_empty() {
-                return Ok(vec![message("nothing mounted that can be unmounted here")]);
-            }
-            Ok(vec![menu("Unmount", items)])
-        }
         "unmount" => {
             keepalive(id);
             if let Some(uri) = arg.strip_prefix("gio:") {
@@ -438,25 +462,6 @@ pub fn answer(id: &Value, ctx: &Value) -> Result<Vec<Value>, String> {
             let b = blk_of(arg).ok_or_else(|| format!("{arg}: not found any more"))?;
             exec(id, &ctx["config"], "udisksctl", &["unmount", "-b", &b.path])?;
             Ok(vec![message(&format!("unmounted {}", b.path))])
-        }
-        "eject_list" => {
-            // a stick, a card, an external disk: one entry for the disk, whatever its partitions
-            let mut seen: Vec<String> = Vec::new();
-            let mut items: Vec<Value> = Vec::new();
-            for b in lsblk().iter().filter(|b| b.removable && !is_system(b, &system)) {
-                if seen.contains(&b.disk) {
-                    continue;
-                }
-                seen.push(b.disk.clone());
-                items.push(row(blk_cells(b), "eject", &format!("blk:{}", b.path)));
-            }
-            for g in gio_mounts() {
-                items.push(row(gio_cells("gvfs", &g, true), "eject", &format!("gio:{}", g.uri)));
-            }
-            if items.is_empty() {
-                return Ok(vec![message("nothing removable to eject")]);
-            }
-            Ok(vec![menu("Eject", items)])
         }
         "eject" => {
             keepalive(id);
@@ -471,6 +476,30 @@ pub fn answer(id: &Value, ctx: &Value) -> Result<Vec<Value>, String> {
             }
             exec(id, &ctx["config"], "udisksctl", &["power-off", "-b", &b.disk])?;
             Ok(vec![message(&format!("{} can be taken out", b.disk))])
+        }
+        // the keys of the devices list: do it, then the list again (refreshed), so it stays open
+        "list_mount" | "list_unmount" | "list_eject" => {
+            keepalive(id);
+            let what = match call {
+                "list_mount" => "mount_only",
+                "list_unmount" => "unmount",
+                _ => "eject",
+            };
+            let mut ctx2 = ctx.clone();
+            ctx2["call"] = json!(what);
+            // a failure is told, and the list comes back all the same
+            let mut out = answer(id, &ctx2).unwrap_or_else(|e| vec![json!({"op": "error", "text": e})]);
+            out.extend(devices_menu(&system));
+            Ok(out)
+        }
+        "mount_only" => {
+            if let Some(uri) = arg.strip_prefix("gio:") {
+                exec(id, &ctx["config"], "gio", &["mount", uri])?;
+                return Ok(vec![message(&format!("mounted {uri}"))]);
+            }
+            let b = blk_of(arg).ok_or_else(|| format!("{arg}: not found any more"))?;
+            let out = exec(id, &ctx["config"], "udisksctl", &["mount", "-b", &b.path])?;
+            Ok(vec![message(&format!("mounted {} at {}", b.path, mounted_at(&out).unwrap_or_default()))])
         }
         "connect_ask" => Ok(vec![json!({"op": "input", "prompt": "Connect to (smb://host/share, sftp://user@host, ftp://host, dav://…)", "value": "", "then": "connect"})]),
         "connect" => connect(id, &ctx["config"], arg.trim()),
@@ -613,6 +642,23 @@ mod tests {
         assert_eq!(mounted_at("Mounted /dev/sdb1 at /run/media/me/MY DISK.").as_deref(), Some("/run/media/me/MY DISK"));
         assert_eq!(mounted_at("nothing"), None);
         assert_eq!(first_line("\n  Error mounting: not authorized \nmore"), "Error mounting: not authorized");
+    }
+
+    #[test]
+    fn phone_volume_from_gio_li() {
+        let text = "Volume(0): SAMSUNG Android\n  Type: GProxyVolume (GProxyVolumeMonitorMTP)\n  ids:\n   unix-device: '/dev/bus/usb/001/003'\n  activation_root=mtp://SAMSUNG_SAMSUNG_Android_X/\n  can_mount=1\n  can_eject=0\nVolume(1): RECOV\n  Type: GProxyVolume (GProxyVolumeMonitorUDisks2)\n  can_mount=1\n";
+        let v = parse_gio_volumes(text);
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].name, "SAMSUNG Android");
+        assert_eq!(v[0].uri, "mtp://SAMSUNG_SAMSUNG_Android_X/");
+    }
+
+    #[test]
+    fn one_mount_listed_twice_is_one() {
+        let text = "Volume(0): SAMSUNG Android\n  Mount(0): SAMSUNG Android -> mtp://X_Y/\nMount(1): mtp -> mtp://X_Y/\nMount(2): EFI -> file:///run/media/u/EFI\n";
+        let m = parse_gio(text);
+        assert_eq!(m.len(), 1);
+        assert_eq!(m[0].name, "SAMSUNG Android");
     }
 
     #[test]
