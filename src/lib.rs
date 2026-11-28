@@ -54,12 +54,18 @@ pub fn parse_lsblk(json: &str) -> Vec<Blk> {
         for d in a {
             let s = |k: &str| d[k].as_str().unwrap_or("").to_string();
             let path = s("path");
-            let rm = d["rm"].as_bool().unwrap_or(false) || d["hotplug"].as_bool().unwrap_or(false) || d["rm"].as_str() == Some("1") || d["hotplug"].as_str() == Some("1");
+            let rm = d["rm"].as_bool().unwrap_or(false)
+                || d["hotplug"].as_bool().unwrap_or(false)
+                || d["rm"].as_str() == Some("1")
+                || d["hotplug"].as_str() == Some("1");
             let kind = s("type");
             let this_disk = if kind == "disk" || kind == "rom" || kind == "loop" { path.clone() } else { disk.to_string() };
             let fstype = s("fstype");
             if !fstype.is_empty() && !NOT_FILESYSTEMS.contains(&fstype.as_str()) && !kind.starts_with("zram") && !path.contains("/zram") {
-                let mounts: Vec<String> = d["mountpoints"].as_array().map(|m| m.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_else(|| d["mountpoint"].as_str().map(|m| vec![m.to_string()]).unwrap_or_default());
+                let mounts: Vec<String> = d["mountpoints"]
+                    .as_array()
+                    .map(|m| m.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+                    .unwrap_or_else(|| d["mountpoint"].as_str().map(|m| vec![m.to_string()]).unwrap_or_default());
                 out.push(Blk {
                     path: path.clone(),
                     label: if s("label").is_empty() { s("model") } else { s("label") },
@@ -287,7 +293,11 @@ pub fn exec(id: &Value, cfg: &Value, cmd: &str, args: &[&str]) -> Result<String,
     drop(master);
     let text = clean(&text);
     // the password question and the line the terminal echoed are not the answer
-    let shown: String = text.lines().filter(|l| !l.trim().is_empty() && !l.contains("====") && !l.to_lowercase().trim_end().ends_with("password:")).collect::<Vec<_>>().join("\n");
+    let shown: String = text
+        .lines()
+        .filter(|l| !l.trim().is_empty() && !l.contains("====") && !l.to_lowercase().trim_end().ends_with("password:"))
+        .collect::<Vec<_>>()
+        .join("\n");
     if status.success() {
         Ok(shown)
     } else {
@@ -330,7 +340,10 @@ fn is_system(b: &Blk, system: &[String]) -> bool {
 }
 
 fn config_system(cfg: &Value) -> Vec<String> {
-    cfg["system"].as_array().map(|a| a.iter().filter_map(|s| s.as_str().map(str::to_string)).collect()).unwrap_or_else(|| ["/", "/boot", "/efi", "/home", "/usr", "/var", "/nix", "[SWAP]"].map(String::from).to_vec())
+    cfg["system"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|s| s.as_str().map(str::to_string)).collect())
+        .unwrap_or_else(|| ["/", "/boot", "/efi", "/home", "/usr", "/var", "/nix", "[SWAP]"].map(String::from).to_vec())
 }
 
 /// An item whose columns the tool aligns one under another, each in its colour (`label` is the text a search matches).
@@ -501,7 +514,9 @@ pub fn answer(id: &Value, ctx: &Value) -> Result<Vec<Value>, String> {
             let out = exec(id, &ctx["config"], "udisksctl", &["mount", "-b", &b.path])?;
             Ok(vec![message(&format!("mounted {} at {}", b.path, mounted_at(&out).unwrap_or_default()))])
         }
-        "connect_ask" => Ok(vec![json!({"op": "input", "prompt": "Connect to (smb://host/share, sftp://user@host, ftp://host, dav://…)", "value": "", "then": "connect"})]),
+        "connect_ask" => {
+            Ok(vec![json!({"op": "input", "prompt": "Connect to (smb://host/share, sftp://user@host, ftp://host, dav://…)", "value": "", "then": "connect"})])
+        }
         "connect" => connect(id, &ctx["config"], arg.trim()),
         _ => Err(format!("no such function: {call}")),
     }
@@ -600,8 +615,13 @@ mod tests {
 
     #[test]
     fn gvfs_mounts_and_folders_are_found() {
-        let g = parse_gio("Drive(0): Disk\n  Type: GProxyDrive\nMount(0): Galaxy -> mtp://SAMSUNG_X/\n  Type: GDaemonMount\nMount(1): docs on server -> smb://server/docs\nMount(2): local -> file:///mnt/x\n");
-        assert_eq!(g, vec![Gio { name: "Galaxy".into(), uri: "mtp://SAMSUNG_X/".into() }, Gio { name: "docs on server".into(), uri: "smb://server/docs".into() }]);
+        let g = parse_gio(
+            "Drive(0): Disk\n  Type: GProxyDrive\nMount(0): Galaxy -> mtp://SAMSUNG_X/\n  Type: GDaemonMount\nMount(1): docs on server -> smb://server/docs\nMount(2): local -> file:///mnt/x\n",
+        );
+        assert_eq!(
+            g,
+            vec![Gio { name: "Galaxy".into(), uri: "mtp://SAMSUNG_X/".into() }, Gio { name: "docs on server".into(), uri: "smb://server/docs".into() }]
+        );
         let before = vec!["mtp:host=A".to_string()];
         let now = vec!["mtp:host=A".to_string(), "smb-share:server=server,share=docs".to_string()];
         // what appeared
@@ -655,7 +675,8 @@ mod tests {
 
     #[test]
     fn one_mount_listed_twice_is_one() {
-        let text = "Volume(0): SAMSUNG Android\n  Mount(0): SAMSUNG Android -> mtp://X_Y/\nMount(1): mtp -> mtp://X_Y/\nMount(2): EFI -> file:///run/media/u/EFI\n";
+        let text =
+            "Volume(0): SAMSUNG Android\n  Mount(0): SAMSUNG Android -> mtp://X_Y/\nMount(1): mtp -> mtp://X_Y/\nMount(2): EFI -> file:///run/media/u/EFI\n";
         let m = parse_gio(text);
         assert_eq!(m.len(), 1);
         assert_eq!(m[0].name, "SAMSUNG Android");
