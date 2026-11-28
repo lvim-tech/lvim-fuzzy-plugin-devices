@@ -5,7 +5,7 @@ edition = "2024"
 license = "BSD-3-Clause"
 description = "The devices plugin of the lvim fuzzy tools: disks and partitions (udisks), phones, shares and servers (gvfs) — mount, unmount, eject, and go into them"
 repository = "https://github.com/lvim-tech/lvim-fuzzy-plugin-devices"
-rust-version = "1.85"
+rust-version = "1.88"
 
 [lib]
 name = "lvim_fuzzy_plugin_devices"
